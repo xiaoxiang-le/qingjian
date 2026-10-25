@@ -26,6 +26,11 @@ pub fn themes_dir() -> Option<PathBuf> {
 }
 
 /// 运行日志目录 `%LOCALAPPDATA%\Qingjian\logs`，不负责创建。
+///
+/// 优先使用环境变量 QINGJIAN_LOG_DIR，方便调试和测试；默认为 %LOCALAPPDATA%\Qingjian\logs。
 pub fn log_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("QINGJIAN_LOG_DIR") {
+        return Some(PathBuf::from(dir));
+    }
     std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join("Qingjian").join("logs"))
 }

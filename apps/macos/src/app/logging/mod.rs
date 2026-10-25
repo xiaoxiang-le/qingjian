@@ -75,7 +75,12 @@ fn filter_for(level: LogLevel) -> EnvFilter {
 }
 
 /// 日志目录，菜单「打开日志目录」也用。
+///
+/// 优先使用环境变量 QINGJIAN_LOG_DIR，方便调试和测试；默认为 ~/Library/Logs/Qingjian。
 pub fn log_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("QINGJIAN_LOG_DIR") {
+        return Some(PathBuf::from(dir));
+    }
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Logs/Qingjian"))
 }
 

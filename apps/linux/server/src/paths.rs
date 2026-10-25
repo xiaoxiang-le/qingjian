@@ -16,6 +16,10 @@ pub fn config_path() -> PathBuf {
     xdg("XDG_CONFIG_HOME", ".config").join("config.toml")
 }
 pub fn log_dir() -> PathBuf {
+    // 优先使用环境变量，方便调试和测试
+    if let Some(dir) = std::env::var_os("QINGJIAN_LOG_DIR") {
+        return PathBuf::from(dir);
+    }
     xdg("XDG_STATE_HOME", ".local/state").join("logs")
 }
 pub fn resource_root() -> Option<PathBuf> {
