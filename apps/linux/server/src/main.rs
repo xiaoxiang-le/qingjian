@@ -28,8 +28,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .max_log_files(7)
         .build(paths::log_dir())?;
     let (writer, _guard) = tracing_appender::non_blocking(appender);
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| config.general.log_level.key().into());
     tracing_subscriber::fmt()
-        .with_env_filter("info")
+        .with_env_filter(filter)
         .with_ansi(false)
         .with_writer(writer)
         .init();
