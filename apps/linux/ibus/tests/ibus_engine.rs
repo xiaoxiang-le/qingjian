@@ -40,6 +40,7 @@ trait InputContext {
     fn focus_in(&self) -> zbus::Result<()>;
     fn focus_out(&self) -> zbus::Result<()>;
     fn process_key_event(&self, keyval: u32, keycode: u32, state: u32) -> zbus::Result<bool>;
+    fn set_content_type(&self, purpose: u32, hints: u32) -> zbus::Result<()>;
 }
 
 /// IBus 总线地址；拿不到说明本机没跑 ibus，测试跳过。
@@ -69,6 +70,10 @@ const KEY_A: u32 = 38;
 const KEY_O: u32 = 32;
 const KEY_SPACE: u32 = 65;
 const KEY_F: u32 = 41;
+const KEY_1: u32 = 2;
+const KEY_2: u32 = 3;
+const KEY_3: u32 = 4;
+const KEY_4: u32 = 5;
 
 /// `IBusModifierType` 的 Ctrl 位。
 const CONTROL: u32 = 1 << 2;
@@ -318,6 +323,317 @@ async fn shortcut_commits_pinyin_before_reaching_the_app() {
         "只该上屏一次：{}",
         signals.summary()
     );
+}
+
+/// 验证 SetContentType 能正确识别密码框并遵守隐私限制。
+///
+/// 密码框（purpose=8/9）或带有 HINT_PRIVATE/SENSITIVE_DATA 标记的输入框应该：
+/// 1. 不显示候选
+/// 2. 不记录学习数据
+/// 3. 不记录输入日志
+#[tokio::test(flavor = "multi_thread")]
+async fn set_content_type_enforces_privacy() {
+    if std::env::var_os("QINGJIAN_IBUS_TEST").is_none() {
+        eprintln!("跳过：没设 QINGJIAN_IBUS_TEST=1（它会动当前会话的输入法并写进真实学习数据）");
+        return;
+    }
+    let Some(address) = bus_address() else {
+        eprintln!("跳过：本机没有跑 ibus-daemon");
+        return;
+    };
+    let connection = Builder::address(address.as_str())
+        .expect("IBus 地址")
+        .build()
+        .await
+        .expect("连上 IBus");
+    let bus = IBusProxy::new(&connection).await.expect("IBus 门面");
+    let (context, signals) = open_context(&connection, &bus, "qingjian-privacy").await;
+    if let Err(per_context) = context.set_engine("qingjian").await
+        && let Err(global) = bus.set_global_engine("qingjian").await
+    {
+        eprintln!("跳过：切不到 qingjian 引擎（按上下文：{per_context}；全局：{global}）");
+        return;
+    }
+    context.focus_in().await.expect("拿焦点");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 测试密码框（purpose=8）
+    let purpose_password: u32 = 8;
+    context
+        .set_content_type(purpose_password, 0)
+        .await
+        .expect("设置密码框类型");
+
+    // 在密码框里输入，应该不会出候选
+    for (keyval, keycode) in [
+        ('n', KEY_N),
+        ('i', KEY_I),
+        ('h', KEY_H),
+        ('a', KEY_A),
+        ('o', KEY_O),
+    ] {
+        let consumed = context
+            .process_key_event(keyval as u32, keycode, 0)
+            .await
+            .expect("按键送达");
+        // 密码框里也应该被吃掉，但不应该出候选
+        assert!(consumed, "密码框里的拼音字母该被吃掉：{keyval}");
+    }
+
+    // 密码框里不应该出现候选表
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let candidate_count = signals.count("UpdateLookupTable");
+    assert_eq!(
+        candidate_count,
+        0,
+        "密码框里不该出现候选表：{}",
+        signals.summary()
+    );
+
+    context.focus_out().await.ok();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+}
+
+/// 验证带有 HINT_PRIVATE 标记的输入框也能正确识别私密状态。
+#[tokio::test(flavor = "multi_thread")]
+async fn hint_private_marks_sensitive_input() {
+    if std::env::var_os("QINGJIAN_IBUS_TEST").is_none() {
+        eprintln!("跳过：没设 QINGJIAN_IBUS_TEST=1（它会动当前会话的输入法并写进真实学习数据）");
+        return;
+    }
+    let Some(address) = bus_address() else {
+        eprintln!("跳过：本机没有跑 ibus-daemon");
+        return;
+    };
+    let connection = Builder::address(address.as_str())
+        .expect("IBus 地址")
+        .build()
+        .await
+        .expect("连上 IBus");
+    let bus = IBusProxy::new(&connection).await.expect("IBus 门面");
+    let (context, signals) = open_context(&connection, &bus, "qingjian-hint-private").await;
+    if let Err(per_context) = context.set_engine("qingjian").await
+        && let Err(global) = bus.set_global_engine("qingjian").await
+    {
+        eprintln!("跳过：切不到 qingjian 引擎（按上下文：{per_context}；全局：{global}）");
+        return;
+    }
+    context.focus_in().await.expect("拿焦点");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 测试 HINT_PRIVATE（bit 10）
+    const HINT_PRIVATE: u32 = 1 << 10;
+    context
+        .set_content_type(0, HINT_PRIVATE)
+        .await
+        .expect("设置私密标记");
+
+    // 在私密输入框里输入
+    for (keyval, keycode) in [
+        ('n', KEY_N),
+        ('i', KEY_I),
+        ('h', KEY_H),
+        ('a', KEY_A),
+        ('o', KEY_O),
+    ] {
+        let consumed = context
+            .process_key_event(keyval as u32, keycode, 0)
+            .await
+            .expect("按键送达");
+        assert!(consumed, "私密框里的拼音字母该被吃掉：{keyval}");
+    }
+
+    // 私密框里不应该出现候选表
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let candidate_count = signals.count("UpdateLookupTable");
+    assert_eq!(
+        candidate_count,
+        0,
+        "私密框里不该出现候选表：{}",
+        signals.summary()
+    );
+
+    context.focus_out().await.ok();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+}
+
+/// 验证普通输入框能正常工作。
+#[tokio::test(flavor = "multi_thread")]
+async fn normal_input_box_works_correctly() {
+    if std::env::var_os("QINGJIAN_IBUS_TEST").is_none() {
+        eprintln!("跳过：没设 QINGJIAN_IBUS_TEST=1（它会动当前会话的输入法并写进真实学习数据）");
+        return;
+    }
+    let Some(address) = bus_address() else {
+        eprintln!("跳过：本机没有跑 ibus-daemon");
+        return;
+    };
+    let connection = Builder::address(address.as_str())
+        .expect("IBus 地址")
+        .build()
+        .await
+        .expect("连上 IBus");
+    let bus = IBusProxy::new(&connection).await.expect("IBus 门面");
+    let (context, signals) = open_context(&connection, &bus, "qingjian-normal").await;
+    if let Err(per_context) = context.set_engine("qingjian").await
+        && let Err(global) = bus.set_global_engine("qingjian").await
+    {
+        eprintln!("跳过：切不到 qingjian 引擎（按上下文：{per_context}；全局：{global}）");
+        return;
+    }
+    context.focus_in().await.expect("拿焦点");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 设置为普通输入框（purpose=0, hints=0）
+    context
+        .set_content_type(0, 0)
+        .await
+        .expect("设置普通输入框类型");
+
+    // 在普通输入框里输入，应该正常出候选
+    for (keyval, keycode) in [
+        ('n', KEY_N),
+        ('i', KEY_I),
+        ('h', KEY_H),
+        ('a', KEY_A),
+        ('o', KEY_O),
+    ] {
+        let consumed = context
+            .process_key_event(keyval as u32, keycode, 0)
+            .await
+            .expect("按键送达");
+        assert!(consumed, "普通框里的拼音字母该被吃掉：{keyval}");
+    }
+
+    // 普通框里应该出现候选表
+    signals
+        .wait_for("UpdateLookupTable", "你好")
+        .await
+        .unwrap_or_else(|| panic!("普通框里该有候选；收到的是 {}", signals.summary()));
+
+    context.focus_out().await.ok();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+}
+
+/// 验证带有 HINT_HIDDEN_TEXT 标记的输入框会被识别为禁用状态。
+#[tokio::test(flavor = "multi_thread")]
+async fn hint_hidden_text_marks_disabled_input() {
+    if std::env::var_os("QINGJIAN_IBUS_TEST").is_none() {
+        eprintln!("跳过：没设 QINGJIAN_IBUS_TEST=1（它会动当前会话的输入法并写进真实学习数据）");
+        return;
+    }
+    let Some(address) = bus_address() else {
+        eprintln!("跳过：本机没有跑 ibus-daemon");
+        return;
+    };
+    let connection = Builder::address(address.as_str())
+        .expect("IBus 地址")
+        .build()
+        .await
+        .expect("连上 IBus");
+    let bus = IBusProxy::new(&connection).await.expect("IBus 门面");
+    let (context, signals) = open_context(&connection, &bus, "qingjian-hidden-text").await;
+    if let Err(per_context) = context.set_engine("qingjian").await
+        && let Err(global) = bus.set_global_engine("qingjian").await
+    {
+        eprintln!("跳过：切不到 qingjian 引擎（按上下文：{per_context}；全局：{global}）");
+        return;
+    }
+    context.focus_in().await.expect("拿焦点");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 测试 HINT_HIDDEN_TEXT（bit 5）
+    const HINT_HIDDEN_TEXT: u32 = 1 << 5;
+    context
+        .set_content_type(0, HINT_HIDDEN_TEXT)
+        .await
+        .expect("设置隐藏文本标记");
+
+    // 在禁用输入框里输入
+    for (keyval, keycode) in [
+        ('n', KEY_N),
+        ('i', KEY_I),
+        ('h', KEY_H),
+        ('a', KEY_A),
+        ('o', KEY_O),
+    ] {
+        let consumed = context
+            .process_key_event(keyval as u32, keycode, 0)
+            .await
+            .expect("按键送达");
+        // 禁用框里按键应该被放行
+        assert!(!consumed, "禁用框里的按键应该被放行：{keyval}");
+    }
+
+    // 禁用框里不应该出现候选表
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let candidate_count = signals.count("UpdateLookupTable");
+    assert_eq!(
+        candidate_count,
+        0,
+        "禁用框里不该出现候选表：{}",
+        signals.summary()
+    );
+
+    context.focus_out().await.ok();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+}
+
+/// 验证 PIN 码输入框也能被正确识别为密码框。
+#[tokio::test(flavor = "multi_thread")]
+async fn pin_input_box_is_treated_as_password() {
+    if std::env::var_os("QINGJIAN_IBUS_TEST").is_none() {
+        eprintln!("跳过：没设 QINGJIAN_IBUS_TEST=1（它会动当前会话的输入法并写进真实学习数据）");
+        return;
+    }
+    let Some(address) = bus_address() else {
+        eprintln!("跳过：本机没有跑 ibus-daemon");
+        return;
+    };
+    let connection = Builder::address(address.as_str())
+        .expect("IBus 地址")
+        .build()
+        .await
+        .expect("连上 IBus");
+    let bus = IBusProxy::new(&connection).await.expect("IBus 门面");
+    let (context, signals) = open_context(&connection, &bus, "qingjian-pin").await;
+    if let Err(per_context) = context.set_engine("qingjian").await
+        && let Err(global) = bus.set_global_engine("qingjian").await
+    {
+        eprintln!("跳过：切不到 qingjian 引擎（按上下文：{per_context}；全局：{global}）");
+        return;
+    }
+    context.focus_in().await.expect("拿焦点");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 测试 PIN 码输入框（purpose=9）
+    let purpose_pin: u32 = 9;
+    context
+        .set_content_type(purpose_pin, 0)
+        .await
+        .expect("设置 PIN 码输入框类型");
+
+    // 在 PIN 码输入框里输入
+    for (keyval, keycode) in [('1', KEY_1), ('2', KEY_2), ('3', KEY_3), ('4', KEY_4)] {
+        let consumed = context
+            .process_key_event(keyval as u32, keycode, 0)
+            .await
+            .expect("按键送达");
+        assert!(consumed, "PIN 码框里的数字该被吃掉：{keyval}");
+    }
+
+    // PIN 码框里不应该出现候选表
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let candidate_count = signals.count("UpdateLookupTable");
+    assert_eq!(
+        candidate_count,
+        0,
+        "PIN 码框里不该出现候选表：{}",
+        signals.summary()
+    );
+
+    context.focus_out().await.ok();
+    tokio::time::sleep(Duration::from_secs(1)).await;
 }
 
 /// 建一个输入上下文，声明能力并开始收它的信号。

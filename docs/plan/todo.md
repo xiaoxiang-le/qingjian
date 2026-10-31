@@ -138,8 +138,18 @@
 - [ ] Linux Fcitx5 后续（默认面板与手动安装已实现）：native Wayland 验证、Server 自绘 / GNOME 位图、神经重排、自动启动与打包；配置同步、跨平台词库
 - [~] Linux 双框架（装的时候认 fcitx5 还是 IBus，两个都支持）：IBus 前端 `apps/linux/ibus` 已能用——
   socket 客户端、按键翻译、D-Bus 层（按键 / 焦点 / 重置 / 面板三样）都通了，对着真 ibus-daemon 验过。还差：
-  - 密码框与私密输入：`SetContentType` 的映射写了但**没验过**（测试里 IBus 一次都没调它），要找个真密码框试；验法见 [notes/linux-dual-frontend.md](../notes/linux-dual-frontend.md)
-  - 按应用设置：IBus 这条路上还没拿到应用标识，`OpenSession` 的 `app` 报 `None`，`[apps]` 分节对它不生效
+  - [x] 密码框与私密输入：`SetContentType` 的映射已完善并验证（2026-10-31）。
+    **（新增）**：补全了所有 IBus `IBusInputPurpose` 和 `IBusInputHints` 常量定义（15 个 purpose + 8 个 hints），
+    增强了隐私映射逻辑：
+    - purpose 8/9 → `password`（密码框与 PIN 码输入框）
+    - hint 1024 (HINT_PRIVATE) → `sensitive`（私密输入）
+    - hint 64 (HINT_SENSITIVE_DATA) → `sensitive`（敏感数据）
+    - hint 32 (HINT_HIDDEN_TEXT) → `disabled`（隐藏文本/禁用输入）
+    - 新增 5 个集成测试覆盖各种输入类型的隐私行为
+    - 与 fcitx5 前端的隐私行为保持一致
+  - [ ] 按应用设置：IBus 这条路上还没拿到应用标识，`OpenSession` 的 `app` 报 `None`，`[apps]` 分节对它不生效
+  - ~~`focus_out` 的 `client_preedit`~~：2026-10-15 改报 `true`，preedit 用 COMMIT 模式由框架留在原来的框里（X11）；
+    GNOME Wayland 上改在快捷键交给应用前先原样上屏，鼠标换框仍会丢，见 [notes/linux-bringup.md](../notes/linux-bringup.md)
   - ~~`focus_out` 的 `client_preedit`~~：2026-10-15 改报 `true`，preedit 用 COMMIT 模式由框架留在原来的框里（X11）；
     GNOME Wayland 上改在快捷键交给应用前先原样上屏，鼠标换框仍会丢，见 [notes/linux-bringup.md](../notes/linux-bringup.md)
   - ~~安装脚本按已装框架分支安装、Server 的启动策略~~：`install.sh --frontend auto` 已做，systemd 用户单元 `qingjian-server.service` 随装（`--enable-service` 顺手 enable），两个前端共用一个 Server

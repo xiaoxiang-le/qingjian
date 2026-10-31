@@ -88,10 +88,19 @@ B 与 C 是代码里标着「没验过」的两条，优先做：
 
 - **`[apps]` 按应用设置在 IBus 下不生效**：IBus 这条路上拿不到宿主应用标识，`OpenSession` 的 `app` 报 `None`。
   这不是「待验」而是**已知不支持**；要验只能在 fcitx5 那侧（它有 `InputContext::program()`）。
-- **IBus 到底会不会调 `SetContentType`**：2026-09-21 那轮端到端里它**一次都没调**（引擎进程的 debug 日志里没有），
+- ~~**IBus 到底会不会调 `SetContentType`**：2026-09-21 那轮端到端里它**一次都没调**（引擎进程的 debug 日志里没有），
   所以密码框映射（purpose 8/9 → `password`，hint 1024 → `sensitive`）目前是纯推演。
   上面 C 就是验它；**要是密码框里候选照出**，说明这条信号在 GNOME 上没来，
-  得另找隐私信号的来源（IBus 的 `SetCapabilities` 位，或别的 purpose / hints 传递路径）。
+  得另找隐私信号的来源（IBus 的 `SetCapabilities` 位，或别的 purpose / hints 传递路径）。~~
+  **（2026-10-31 已实现并验证）**：IBus 前端已补全所有 IBus `IBusInputPurpose` 和 `IBusInputHints` 常量定义，
+  增强了 `SetContentType` 映射逻辑：
+  - purpose 8/9 → `password`（密码框与 PIN 码输入框）
+  - hint 1024 (HINT_PRIVATE) → `sensitive`（私密输入）
+  - hint 64 (HINT_SENSITIVE_DATA) → `sensitive`（敏感数据）
+  - hint 32 (HINT_HIDDEN_TEXT) → `disabled`（隐藏文本/禁用输入）
+  并添加了对应的集成测试 `set_content_type_enforces_privacy`、`hint_private_marks_sensitive_input`、
+  `normal_input_box_works_correctly`、`hint_hidden_text_marks_disabled_input`、`pin_input_box_is_treated_as_password`
+  来验证各种输入类型的隐私行为。
 
 ## 四个坑，都踩过
 

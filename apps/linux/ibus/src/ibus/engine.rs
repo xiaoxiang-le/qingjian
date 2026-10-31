@@ -27,11 +27,33 @@ const PREEDIT_CLEAR: u32 = 0;
 /// X11 上拼音进了新框，Wayland 上两边都没有。
 const PREEDIT_COMMIT: u32 = 1;
 
-/// `SetContentType` 的 purpose：密码框与 PIN（`IBusInputPurpose`）。
+/// `SetContentType` 的 purpose：输入框的用途（`IBusInputPurpose`）。
+const PURPOSE_FREE_FORM: u32 = 0;
+const PURPOSE_ALPHA: u32 = 1;
+const PURPOSE_NUMBER: u32 = 2;
+const PURPOSE_TERMINAL: u32 = 3;
+const PURPOSE_URL: u32 = 4;
+const PURPOSE_EMAIL: u32 = 5;
+const PURPOSE_NAME: u32 = 6;
 const PURPOSE_PASSWORD: u32 = 8;
 const PURPOSE_PIN: u32 = 9;
+const PURPOSE_DATE: u32 = 7;
+const PURPOSE_TIME: u32 = 10;
+const PURPOSE_DATETIME: u32 = 11;
+const PURPOSE_PHONE: u32 = 12;
+const PURPOSE_MONTH: u32 = 13;
+const PURPOSE_DIGITS: u32 = 14;
 
-/// `SetContentType` 的 hints：应用声明这是私密输入（`IBUS_INPUT_HINT_PRIVATE`）。
+/// `SetContentType` 的 hints：输入行为的提示（`IBusInputHints`）。
+const HINT_NONE: u32 = 0;
+const HINT_SPELLCHECK: u32 = 1 << 0;
+const HINT_COMPLETION: u32 = 1 << 1;
+const HINT_LOWERCASE: u32 = 1 << 2;
+const HINT_UPPERCASE: u32 = 1 << 3;
+const HINT_TITLECASE: u32 = 1 << 4;
+const HINT_HIDDEN_TEXT: u32 = 1 << 5;
+const HINT_SENSITIVE_DATA: u32 = 1 << 6;
+const HINT_NO_SUGGESTIONS: u32 = 1 << 7;
 const HINT_PRIVATE: u32 = 1 << 10;
 
 /// 把一帧发给面板：preedit、候选表、辅助行各发一次，空的就发隐藏。
@@ -231,12 +253,17 @@ impl IBusEngine {
     /// Server 在收到能力之前不接受按键，所以会话一开就报一次缺省值，这里只报变化。
     async fn set_content_type(&mut self, purpose: u32, hints: u32) {
         let capabilities = Capabilities {
-            sensitive: hints & HINT_PRIVATE != 0,
+            sensitive: hints & HINT_PRIVATE != 0 || hints & HINT_SENSITIVE_DATA != 0,
             password: purpose == PURPOSE_PASSWORD || purpose == PURPOSE_PIN,
-            disabled: false,
+            disabled: hints & HINT_HIDDEN_TEXT != 0,
         };
         match self.client.set_capabilities(&self.context, capabilities) {
-            Ok(true) => tracing::debug!(?capabilities, "输入框类型变了，已报给 Server"),
+            Ok(true) => tracing::debug!(
+                ?capabilities,
+                purpose,
+                hints,
+                "输入框类型变了，已报给 Server"
+            ),
             Ok(false) => {}
             Err(error) => tracing::warn!(%error, "报输入框类型失败"),
         }
